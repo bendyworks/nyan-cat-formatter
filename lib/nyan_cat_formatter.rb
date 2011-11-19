@@ -3,6 +3,8 @@ require 'rspec/core/formatters/base_text_formatter'
 
 class NyanCatFormatter < RSpec::Core::Formatters::BaseTextFormatter
 
+  TRAIL_CHARS = %w( ¯ ¯ · . ¸ ¸ . · )
+
   ESC     = "\e["
   NND     = "#{ESC}0m"
   PASS    = '='
@@ -10,39 +12,66 @@ class NyanCatFormatter < RSpec::Core::Formatters::BaseTextFormatter
   ERROR   = '!'
   PENDING = '·'
 
-  attr_reader :title, :current, :example_results, :color_index
+  attr_accessor :current, :color_index, :bar_length, :example_results,
+    :pending_count, :failure_count, :title, :title_width, :max_title_width,
+    :max_count_width
 
   def start(example_count)
     super(example_count)
-    @current, @color_index = 0,0
-    @bar_length = 70
-    @example_results = []
+    self.current, self.color_index = 0,0
+    self.bar_length = `tput cols`.to_i
+    self.example_results = []
+    self.max_count_width = example_count.to_s.size
+    self.max_title_width = max_count_width * 2 + 4
   end
 
   def example_passed(example)
     super(example)
-    tick PASS
+    tick TRAIL_CHARS[current % TRAIL_CHARS.count]
   end
 
   def example_pending(example)
     super(example)
-    @pending_count =+1
+    self.pending_count =+1
     tick PENDING
   end
 
   def example_failed(example)
     super(example)
-    @failure_count =+1
+    self.failure_count =+1
     tick FAIL
   end
 
+  # Increments the example count and displays the current progress
+  #
+  # Returns nothing
+  def tick(mark = PASS)
+    self.example_results << mark
+    self.current =  (current > example_count) ? example_count : current + 1
+    dump_progress
+  end
+
+  # Displays the current progress in all Nyan Cat glory
+  #
+  def dump_progress
+    title = "  #{current.to_s.rjust max_count_width}/#{example_count.to_s.rjust max_count_width}:"
+    max_width = 30
+    self.color_index -= [bar_length - max_title_width - 18, current].min - 1
+    examples = example_results.last(bar_length - max_title_width - 18)
+    rainbow = examples.map {|r| highlight r}.join
+    output.print (' ' * title.size) + rainbow + nyan_cat_back + "\n"
+    output.print (' ' * title.size) + rainbow + nyan_cat_ears + "\n"
+    output.print title + rainbow + nyan_cat_face + "\n"
+    output.print (' ' * title.size) + rainbow + nyan_cat_feet + "\r\e[3A"
+  end
+
   def start_dump
-    @current = @example_count
+    self.current = example_count
   end
 
   def dump_summary(duration, example_count, failure_count, pending_count)
     dump_profile if profile_examples? && failure_count == 0
-    summary = "\nNyan Cat flew #{format_seconds(duration)} seconds".split(//).map { |c| rainbowify(c) }
+    summary = "\n\n\n\n\nNyan Cat flew for #{format_seconds(duration)} seconds".split(//).map { |c| rainbowify(c) }
     output.puts summary.join
     output.puts colorise_summary(summary_line(example_count, failure_count, pending_count))
     dump_commands_to_rerun_failed_examples
@@ -52,77 +81,50 @@ class NyanCatFormatter < RSpec::Core::Formatters::BaseTextFormatter
     # noop
   end
 
-  # Increments the example count and displays the current progress
-  #
-  # Returns nothing
-  def tick(mark = PASS)
-    @example_results << mark
-    @current =  (@current > @example_count) ? @example_count : @current + 1
-    @title = "  #{current}/#{example_count}"
-    dump_progress
-  end
-
-  # Creates a rainbow trail
-  #
-  # Returns the sprintf format of the Nyan cat
-  def nyan_trail
-    width =  percentage * @bar_length / 100
-    marker = @example_results.map{ |mark| highlight(mark) }.join
-    sprintf("%s#{nyan_cat}%s", marker, " " * (@bar_length - width) )
-  end
-
-  # Calculates the percentage completed any given point
-  #
-  # Returns Fixnum of the percentage
-  def percentage
-    @example_count.zero? ? 100 : @current * 100 / @example_count
-  end
-
   # Ascii Nyan Cat. If tests are complete, Nyan Cat goes to sleep. If
   # there are failing or pending examples, Nyan Cat is concerned.
   #
   # Returns String Nyan Cat
-  def nyan_cat
-    if @failure_count > 0 || @pending_count > 0
-      '~|_(o.o)'
-    elsif (@current == @example_count)
-      '~|_(-.-)'
+  def nyan_cat_back
+    '  ╭ ━━━━━━ ╮'
+  end
+
+  def nyan_cat_ears
+    '  ┃.  〮.  〮⟑   ⟑'
+  end
+
+  def nyan_cat_face
+    if failure_count > 0 || pending_count > 0
+      '╭ ┃ . ᐧ（｡ˣ⌢ ˣ｡）'
+    elsif (current == example_count)
+      '╰ ┃ . ᐧ（｡ᐢ‿‿ᐢ｡）'
     else
-      '~|_(^.^)'
+      tail = current % 4 < 2 ? '╭ ' : '╰ '
+      "#{tail}┃ ᐧ .（｡°‿‿°｡）"
     end
   end
 
-  # Displays the current progress in all Nyan Cat glory
-  #
-  def dump_progress
-    max_width = 80
-    line  = sprintf("%-8s %s", @title[0,(7)] + ":", nyan_trail)
-    tail  = (@current == @example_count) ? "\n" : "\r"
-
-    if line.length == max_width - 1
-      output.print line + tail
-      output.flush
-    elsif line.length >= max_width
-      @bar_length = [@bar_length - (line.length - max_width + 1), 0].max
-      @bar_length == 0 ? output.print( rainbowify(line + tail) ) : dump_progress
+  def nyan_cat_feet
+    if current % 4 < 2
+      '  ╰ ━⊍━⊍━━ ⊍ ⊍'
     else
-      @bar_length += max_width - line.length + 1
-      dump_progress
+      '  ╰ ⊍━⊍━━━⊍ ⊍ '
     end
   end
+
 
   # Colorizes the string with raindow colors of the rainbow
   #
   def rainbowify(string)
-    c = colors[@color_index % colors.size]
-    @color_index += 1
+    c = colors[color_index % colors.size]
+    self.color_index += 1
     "#{ESC}38;5;#{c}m#{string}#{NND}"
   end
 
   # Calculates the colors of the rainbow
   #
   def colors
-    @colors ||= (0...(6 * 7)).map do |n|
+    colors ||= (0...(6 * 7)).map do |n|
       pi_3 = Math::PI / 3
       n *= 1.0 / 6
       r  = (3 * Math.sin(n           ) + 3).to_i
@@ -136,11 +138,14 @@ class NyanCatFormatter < RSpec::Core::Formatters::BaseTextFormatter
   # we assign red if failed or yellow if an error occurred.
   #
   def highlight(mark = PASS)
-    case mark
-      when PASS;  rainbowify mark
-      when FAIL;  red mark
-      when ERROR; yellow mark
-      else mark
+    if TRAIL_CHARS.include? mark
+      rainbowify mark
+    else
+      case mark
+        when FAIL;  red mark
+        when ERROR; yellow mark
+        else mark
+      end
     end
   end
 
